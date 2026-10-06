@@ -1,0 +1,16 @@
+{
+  "name": "shein-clone",
+  "private": true,
+  "version": "1.0.0",
+  "description": "App de e-commerce (estilo Shein/Temu) para movil y escritorio, con logica compartida",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "backend": "npm run dev --workspace=packages/backend",
+    "seed": "npm run seed --workspace=packages/backend",
+    "mobile": "npm run start --workspace=packages/mobile",
+    "desktop": "npm run dev --workspace=packages/desktop",
+    "desktop:build": "npm run build --workspace=packages/desktop"
+  }
+}

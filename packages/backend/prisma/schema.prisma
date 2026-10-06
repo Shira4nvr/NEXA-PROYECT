@@ -1,0 +1,248 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// USUARIOS Y DIRECCIONES
+// ---------------------------------------------------------------------------
+
+model User {
+  id        String    @id @default(uuid())
+  name      String?
+  email     String    @unique
+  password  String    // hash con bcrypt, nunca texto plano
+  role      Role      @default(CUSTOMER)
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+
+  addresses Address[]
+  cartItems CartItem[]
+  orders    Order[]
+  reviews   Review[]
+  sellerProfile SellerProfile?
+  consents  ConsentRecord[]
+}
+
+model SellerProfile {
+  id                   String       @id @default(uuid())
+  userId               String       @unique
+  storeName            String
+  legalName            String
+  identificationNumber String       @unique
+  noticeAddress        String
+  contactPhone         String
+  status               SellerStatus @default(PENDING)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  products Product[]
+}
+
+enum Role {
+  CUSTOMER
+  SELLER
+  ADMIN
+}
+
+model Address {
+  id          String  @id @default(uuid())
+  userId      String
+  label       String  // ej: "Casa", "Trabajo"
+  street      String
+  city        String
+  state       String
+  zipCode     String
+  country     String  @default("CO")
+  isDefault   Boolean @default(false)
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders Order[]
+}
+
+// ---------------------------------------------------------------------------
+// CATALOGO: categorias, productos, variantes (talla/color) e imagenes
+// ---------------------------------------------------------------------------
+
+model Category {
+  id       String     @id @default(uuid())
+  name     String
+  slug     String     @unique
+  parentId String?    // permite subcategorias (ej: "Ropa" -> "Vestidos")
+  parent   Category?  @relation("CategoryToSubcategory", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryToSubcategory")
+  products Product[]
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  basePrice   Int      // precio base en la unidad minima de la moneda (sin decimales)
+  categoryId  String
+  sellerId    String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  category Category         @relation(fields: [categoryId], references: [id])
+  seller   SellerProfile?  @relation(fields: [sellerId], references: [id], onDelete: SetNull)
+  images   ProductImage[]
+  variants ProductVariant[]
+  reviews  Review[]
+}
+
+model ProductImage {
+  id        String  @id @default(uuid())
+  productId String
+  url       String
+  altText   String?
+  position  Int     @default(0) // orden en el que se muestran las fotos
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+// Una variante representa una combinacion vendible especifica: talla + color.
+// El stock y el precio (si difiere del base) viven aqui, no en Product.
+model ProductVariant {
+  id        String  @id @default(uuid())
+  productId String
+  size      String  // ej: "S", "M", "L", "38", "40"
+  color     String
+  sku       String  @unique
+  price     Int?    // si es null, se usa el basePrice del producto
+  stock     Int     @default(0)
+
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+
+  @@unique([productId, size, color])
+}
+
+// ---------------------------------------------------------------------------
+// CARRITO
+// ---------------------------------------------------------------------------
+
+model CartItem {
+  id        String @id @default(uuid())
+  quantity  Int    @default(1)
+  userId    String
+  variantId String
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, variantId]) // no duplicar la misma variante en el carrito
+}
+
+// ---------------------------------------------------------------------------
+// ORDENES Y PAGOS
+// ---------------------------------------------------------------------------
+
+model Order {
+  id        String      @id @default(uuid())
+  userId    String
+  addressId String
+  status    OrderStatus @default(PENDING)
+  total     Int         // suma calculada al momento de crear la orden
+  createdAt DateTime    @default(now())
+
+  user    User        @relation(fields: [userId], references: [id])
+  address Address     @relation(fields: [addressId], references: [id])
+  items   OrderItem[]
+  payment Payment?
+}
+
+enum OrderStatus {
+  PENDING     // creada, esperando pago
+  PAID        // pago confirmado
+  SHIPPED     // enviada
+  DELIVERED   // entregada
+  CANCELLED   // cancelada
+}
+
+// Guarda el precio al momento de la compra (no el precio actual del producto,
+// que puede cambiar despues).
+model OrderItem {
+  id           String @id @default(uuid())
+  orderId      String
+  variantId    String
+  quantity     Int
+  priceAtOrder Int
+
+  order   Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id])
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  orderId       String        @unique
+  method        PaymentMethod
+  status        PaymentStatus @default(PENDING)
+  transactionId String?       // id que devuelve la pasarela de pago (Stripe, etc.)
+  createdAt     DateTime      @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+enum PaymentMethod {
+  CREDIT_CARD
+  DEBIT_CARD
+  PAYPAL
+  CASH_ON_DELIVERY
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+// ---------------------------------------------------------------------------
+// RESENAS
+// ---------------------------------------------------------------------------
+
+model Review {
+  id        String   @id @default(uuid())
+  userId    String
+  productId String
+  rating    Int      // 1 a 5
+  comment   String?
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId]) // un usuario solo puede resenar un producto una vez
+}
+
+model ConsentRecord {
+  id             String        @id @default(uuid())
+  userId         String
+  type           ConsentType
+  documentVersion String
+  grantedAt      DateTime      @default(now())
+  revokedAt      DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type, grantedAt])
+}
+
+enum SellerStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum ConsentType {
+  TERMS_OF_USE
+  PRIVACY_AUTHORIZATION
+  MARKETING
+}

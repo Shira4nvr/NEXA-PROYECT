@@ -1,0 +1,33 @@
+{
+  "name": "@shein-clone/backend",
+  "version": "1.0.0",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "prisma:migrate": "prisma migrate dev --name init",
+    "prisma:generate": "prisma generate",
+    "prisma:studio": "prisma studio",
+    "seed": "node prisma/seed.js",
+    "admin:create": "node scripts/create-admin.js",
+    "customer:create": "node scripts/create-customer.js",
+    "customer:reset-password": "node scripts/reset-customer-password.js",
+    "test:api": "node scripts/test-api-integration.js",
+    "test:iam": "node scripts/test-iam-connection.js",
+    "test:reader": "node scripts/test-reader-connection.js"
+  },
+  "dependencies": {
+    "@aws-sdk/rds-signer": "^3.600.0",
+    "@prisma/client": "^5.14.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.4.0",
+    "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.14.0"
+  }
+}

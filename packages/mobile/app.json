@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Nexo",
+    "slug": "tutienda-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#ffffff"
+    },
+    "ios": { "supportsTablet": true },
+    "android": { "package": "com.tutienda.mobile" }
+  }
+}
