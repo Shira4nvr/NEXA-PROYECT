@@ -10,6 +10,7 @@ import LegalScreen from "../screens/LegalScreen";
 import HomeScreen from "../screens/HomeScreen";
 import ProductDetailScreen from "../screens/ProductDetailScreen";
 import CartScreen from "../screens/CartScreen";
+import CustomerOrdersScreen from "../screens/CustomerOrdersScreen";
 import ProfileScreen from "../screens/ProfileScreen";
 import { colors } from "../theme/colors";
 import { useAuthStore } from "@shein-clone/shared";
@@ -56,12 +57,21 @@ function StoreTabs() {
   );
 }
 
+function CustomerOrdersRoute({ navigation }) {
+  const user = useAuthStore((state) => state.user);
+  useEffect(() => {
+    if (!user) navigation.replace("Login");
+  }, [navigation, user]);
+  return user ? <CustomerOrdersScreen navigation={navigation} /> : null;
+}
+
 export default function AppNavigator() {
   return (
     <NavigationContainer>
       <RootStack.Navigator screenOptions={{ headerShown: false }}>
         <RootStack.Screen name="Login" component={LoginScreen} />
         <RootStack.Screen name="Store" component={StoreTabs} />
+        <RootStack.Screen name="Orders" component={CustomerOrdersRoute} options={{ headerShown: true, title: "Mis pedidos" }} />
         <RootStack.Screen name="Seller" component={SellerRoute} />
         <RootStack.Screen name="Admin" component={AdminRoute} />
         <RootStack.Screen name="Legal" component={LegalScreen} />

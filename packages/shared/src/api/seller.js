@@ -23,3 +23,16 @@ export async function updateSellerProduct(productId, formData) {
 export async function archiveSellerProduct(productId) {
   await apiClient.delete(`/seller/products/${productId}`);
 }
+
+export async function getSellerOrders() {
+  const { data } = await apiClient.get("/seller/orders");
+  return data;
+}
+
+export async function updateSellerOrderItemFulfillment(orderItemId, status, estimatedArrival) {
+  const { data } = await apiClient.patch(`/seller/orders/items/${orderItemId}/fulfillment`, {
+    status,
+    estimatedArrival,
+  });
+  return data;
+}

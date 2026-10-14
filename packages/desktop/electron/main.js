@@ -1,7 +1,9 @@
 const { app, BrowserWindow } = require("electron");
 const path = require("path");
+const { fileURLToPath } = require("url");
 
 const isDev = !app.isPackaged;
+const appEntry = path.resolve(__dirname, "../dist/index.html");
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -16,11 +18,23 @@ function createWindow() {
     },
   });
 
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  win.webContents.on("will-navigate", (event, url) => {
+    let allowedUrl = false;
+    if (isDev) {
+      const target = new URL(url);
+      allowedUrl = target.origin === "http://localhost:5173";
+    } else if (url.startsWith("file://")) {
+      allowedUrl = path.resolve(fileURLToPath(url)) === appEntry;
+    }
+    if (!allowedUrl) event.preventDefault();
+  });
+
   if (isDev) {
     win.loadURL("http://localhost:5173");
     win.webContents.openDevTools();
   } else {
-    win.loadFile(path.join(__dirname, "../dist/index.html"));
+    win.loadFile(appEntry);
   }
 }
 

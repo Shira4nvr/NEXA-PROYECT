@@ -1,6 +1,8 @@
 {
   "name": "@shein-clone/desktop",
   "version": "1.0.0",
+  "description": "NEXO desktop marketplace application",
+  "author": "NEXO",
   "main": "electron/main.js",
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
@@ -22,8 +24,13 @@
   },
   "build": {
     "appId": "com.tutienda.desktop",
+    "productName": "NEXO",
+    "electronVersion": "30.5.1",
+    "directories": {
+      "output": "../../release"
+    },
     "files": ["dist/**/*", "electron/**/*"],
-    "win": { "target": "nsis" },
+    "win": { "target": "nsis", "signAndEditExecutable": false },
     "mac": { "target": "dmg" },
     "linux": { "target": "AppImage" }
   }

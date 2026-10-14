@@ -21,6 +21,12 @@ export function configureApiBaseUrl(baseURL) {
   }
 }
 
+export function getPublicAssetUrl(url) {
+  if (!url || /^https?:\/\//i.test(url)) return url || "";
+  const origin = apiClient.defaults.baseURL.replace(/\/api\/?$/, "");
+  return `${origin}${url.startsWith("/") ? url : `/${url}`}`;
+}
+
 // Agrega automaticamente el token de sesion (si existe) a cada request.
 apiClient.interceptors.request.use((config) => {
   const token = useAuthStore.getState().token;

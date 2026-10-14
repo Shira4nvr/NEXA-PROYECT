@@ -1,12 +1,10 @@
 import { create } from "zustand";
 import { addItemToServer, fetchCartFromServer, removeItemFromServer, updateItemOnServer } from "../api/cart";
-import { apiClient } from "../api/client";
+import { getPublicAssetUrl } from "../api/client";
 import { useAuthStore } from "./useAuthStore";
 
 function imageUrl(url) {
-  if (!url || /^https?:\/\//i.test(url)) return url || "";
-  const origin = apiClient.defaults.baseURL.replace(/\/api\/?$/, "");
-  return `${origin}${url.startsWith("/") ? url : `/${url}`}`;
+  return getPublicAssetUrl(url);
 }
 
 function normalizeCartItem(item) {

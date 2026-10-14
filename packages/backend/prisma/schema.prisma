@@ -151,6 +151,12 @@ model Order {
   status    OrderStatus @default(PENDING)
   total     Int         // suma calculada al momento de crear la orden
   createdAt DateTime    @default(now())
+  deliveryLabel   String
+  deliveryStreet  String
+  deliveryCity    String
+  deliveryState   String
+  deliveryZipCode String
+  deliveryCountry String
 
   user    User        @relation(fields: [userId], references: [id])
   address Address     @relation(fields: [addressId], references: [id])
@@ -169,14 +175,23 @@ enum OrderStatus {
 // Guarda el precio al momento de la compra (no el precio actual del producto,
 // que puede cambiar despues).
 model OrderItem {
-  id           String @id @default(uuid())
-  orderId      String
-  variantId    String
-  quantity     Int
-  priceAtOrder Int
+  id                 String           @id @default(uuid())
+  orderId            String
+  variantId          String
+  quantity           Int
+  priceAtOrder       Int
+  fulfillmentStatus  FulfillmentStatus @default(PENDING)
+  estimatedArrival   DateTime?
 
   order   Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
   variant ProductVariant @relation(fields: [variantId], references: [id])
+}
+
+enum FulfillmentStatus {
+  PENDING
+  PREPARING
+  IN_TRANSIT
+  DELIVERED
 }
 
 model Payment {

@@ -9,7 +9,7 @@ import {
   View,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import { archiveSellerProduct, createSellerProduct, getCategories, getSellerProducts, getSellerProfile, updateSellerProduct, useAuthStore } from "@shein-clone/shared";
+import { archiveSellerProduct, createSellerProduct, getCategories, getSellerOrders, getSellerProducts, getSellerProfile, updateSellerOrderItemFulfillment, updateSellerProduct, useAuthStore } from "@shein-clone/shared";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { colors } from "../theme/colors";
 
@@ -18,9 +18,25 @@ function formatPrice(value) {
   return Number.isFinite(amount) ? `$ ${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(amount)} COP` : "Precio sin definir";
 }
 
+const FULFILLMENT_STEPS = [
+  ["PENDING", "Pedido recibido"],
+  ["PREPARING", "Alistamiento"],
+  ["IN_TRANSIT", "En transporte"],
+  ["DELIVERED", "Entregado"],
+];
+const colombianToday = () => new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Bogota",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+}).format(new Date());
+
 export default function SellerDashboardScreen({ navigation }) {
   const [products, setProducts] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [fulfillmentDrafts, setFulfillmentDrafts] = useState({});
   const [categories, setCategories] = useState([]);
+  const [section, setSection] = useState("products");
   const [categoryId, setCategoryId] = useState("");
   const [profile, setProfile] = useState(null);
   const [name, setName] = useState("");
@@ -35,12 +51,19 @@ export default function SellerDashboardScreen({ navigation }) {
     let active = true;
     Promise.all([getSellerProfile(), getCategories()])
       .then(async ([sellerProfile, availableCategories]) => {
-        const sellerProducts = sellerProfile.status === "ACTIVE" ? await getSellerProducts() : [];
+        const [sellerProducts, sellerOrders] = sellerProfile.status === "ACTIVE"
+          ? await Promise.all([getSellerProducts(), getSellerOrders()])
+          : [[], []];
         if (!active) return;
         setProfile(sellerProfile);
         setCategories(availableCategories);
         setCategoryId(availableCategories[0]?.id || "");
         setProducts(sellerProducts);
+        setOrders(sellerOrders);
+        setFulfillmentDrafts(Object.fromEntries(sellerOrders.map((item) => [item.id, {
+          status: item.fulfillmentStatus,
+          estimatedArrival: item.estimatedArrival ? item.estimatedArrival.slice(0, 10) : "",
+        }])));
       })
       .catch((error) => { if (active) setNotice(error.response?.data?.error || "No se pudo cargar el módulo de vendedor."); })
       .finally(() => { if (active) setIsLoading(false); });
@@ -110,6 +133,48 @@ export default function SellerDashboardScreen({ navigation }) {
     }
   }
 
+  function setFulfillmentDraft(item, changes) {
+    setFulfillmentDrafts((current) => {
+      const existing = current[item.id] || {
+        status: item.fulfillmentStatus,
+        estimatedArrival: item.estimatedArrival?.slice(0, 10) || "",
+      };
+      return { ...current, [item.id]: { ...existing, ...changes } };
+    });
+  }
+
+  async function saveFulfillment(item) {
+    const draft = fulfillmentDrafts[item.id] || {
+      status: item.fulfillmentStatus,
+      estimatedArrival: item.estimatedArrival?.slice(0, 10) || "",
+    };
+    if (draft.estimatedArrival && !/^\d{4}-\d{2}-\d{2}$/.test(draft.estimatedArrival)) {
+      setNotice("Escribe la fecha de llegada con el formato AAAA-MM-DD.");
+      return;
+    }
+    try {
+      const updated = await updateSellerOrderItemFulfillment(item.id, draft.status, draft.estimatedArrival || undefined);
+      setOrders((current) => current.map((entry) => entry.id === item.id ? { ...entry, ...updated } : entry));
+      setFulfillmentDrafts((current) => ({
+        ...current,
+        [item.id]: {
+          status: updated.fulfillmentStatus,
+          estimatedArrival: updated.estimatedArrival ? updated.estimatedArrival.slice(0, 10) : "",
+        },
+      }));
+      setNotice("El seguimiento del pedido se actualizó.");
+    } catch (error) {
+      setNotice(error.response?.data?.error || "No se pudo actualizar el seguimiento del pedido.");
+    }
+  }
+
+  const groupedOrders = [...orders.reduce((groups, item) => {
+    const group = groups.get(item.order.id) || { order: item.order, items: [] };
+    group.items.push(item);
+    groups.set(item.order.id, group);
+    return groups;
+  }, new Map()).values()];
+
   function logout() {
     useAuthStore.getState().logout();
     navigation.replace("Login");
@@ -127,6 +192,71 @@ export default function SellerDashboardScreen({ navigation }) {
           <Text style={styles.warningTitle}>PERFIL {profile?.status || "CARGANDO"}</Text>
           <Text style={styles.warningCopy}>{profile?.status === "ACTIVE" ? "Los productos y el inventario se guardan en la base de datos." : "Administración debe aprobar el perfil antes de publicar productos."}</Text>
         </View>
+        <View style={styles.sectionTabs} accessibilityRole="tablist">
+          <Pressable accessibilityRole="tab" accessibilityState={{ selected: section === "products" }} onPress={() => setSection("products")} style={[styles.sectionTab, section === "products" && styles.sectionTabActive]}>
+            <Text style={[styles.sectionTabText, section === "products" && styles.sectionTabTextActive]}>Productos</Text>
+          </Pressable>
+          <Pressable accessibilityRole="tab" accessibilityState={{ selected: section === "orders" }} onPress={() => setSection("orders")} style={[styles.sectionTab, section === "orders" && styles.sectionTabActive]}>
+            <Text style={[styles.sectionTabText, section === "orders" && styles.sectionTabTextActive]}>Pedidos ({groupedOrders.length})</Text>
+          </Pressable>
+        </View>
+        {section === "orders" ? <>
+          <Text style={styles.eyebrow}>VENTAS Y LOGÍSTICA</Text>
+          <Text style={styles.title}>Pedidos de clientes</Text>
+          <Text style={styles.subtitle}>Actualiza el alistamiento, registra el transporte y agenda la fecha estimada de llegada.</Text>
+          {groupedOrders.map(({ order, items }) => (
+            <View key={order.id} style={styles.orderCard}>
+              <View style={styles.orderHeader}>
+                <Text style={styles.orderTitle}>Pedido {order.id.slice(0, 8).toUpperCase()}</Text>
+                <Text style={styles.orderDate}>{new Date(order.createdAt).toLocaleDateString("es-CO", { dateStyle: "medium" })}</Text>
+              </View>
+              <Text style={styles.orderCustomer}>{order.user?.name || "Cliente"} · {order.user?.email}</Text>
+              <Text style={styles.orderAddress}>Entrega: {order.deliveryLabel} · {order.deliveryStreet}, {order.deliveryCity}, {order.deliveryState} {order.deliveryZipCode}</Text>
+              {items.map((item) => {
+                const statusIndex = FULFILLMENT_STEPS.findIndex(([status]) => status === item.fulfillmentStatus);
+                const draft = fulfillmentDrafts[item.id] || {
+                  status: item.fulfillmentStatus,
+                  estimatedArrival: item.estimatedArrival?.slice(0, 10) || "",
+                };
+                const nextStatuses = FULFILLMENT_STEPS.slice(statusIndex, Math.min(statusIndex + 2, FULFILLMENT_STEPS.length));
+                return (
+                  <View key={item.id} style={styles.orderItem}>
+                    <Text style={styles.orderProduct}>{item.variant.product.name} · {item.variant.size} / {item.variant.color} · Cantidad {item.quantity}</Text>
+                    <Text style={styles.orderStatus}>Estado actual: {FULFILLMENT_STEPS[statusIndex]?.[1] || item.fulfillmentStatus}</Text>
+                    <Text style={styles.label}>Avance del pedido</Text>
+                    <View style={styles.statusOptions}>
+                      {nextStatuses.map(([status, label]) => <Pressable
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected: draft.status === status }}
+                        key={status}
+                        onPress={() => setFulfillmentDraft(item, { status })}
+                        style={[styles.statusOption, draft.status === status && styles.statusOptionActive]}
+                      ><Text style={[styles.statusOptionText, draft.status === status && styles.statusOptionTextActive]}>{label}</Text></Pressable>)}
+                    </View>
+                    <Text style={styles.label}>Fecha estimada de llegada</Text>
+                    <TextInput
+                      accessibilityLabel={`Fecha estimada de llegada para ${item.variant.product.name}`}
+                      value={draft.estimatedArrival}
+                      onChangeText={(value) => setFulfillmentDraft(item, { estimatedArrival: value })}
+                      placeholder="AAAA-MM-DD"
+                      maxLength={10}
+                      keyboardType="numbers-and-punctuation"
+                      editable={item.fulfillmentStatus !== "DELIVERED"}
+                      style={styles.input}
+                    />
+                    <Text style={styles.dateHint}>Usa el formato AAAA-MM-DD. Para iniciar el transporte se requiere una fecha válida desde hoy ({colombianToday()}).</Text>
+                    {item.estimatedArrival && <Text style={styles.arrival}>Llegada agendada: {new Date(item.estimatedArrival).toLocaleDateString("es-CO", { dateStyle: "medium" })}</Text>}
+                    <Pressable accessibilityRole="button" disabled={item.fulfillmentStatus === "DELIVERED"} onPress={() => saveFulfillment(item)} style={[styles.primaryButton, item.fulfillmentStatus === "DELIVERED" && styles.disabled]}>
+                      <Text style={styles.primaryButtonText}>{item.fulfillmentStatus === "DELIVERED" ? "Pedido entregado" : "Guardar seguimiento"}</Text>
+                    </Pressable>
+                  </View>
+                );
+              })}
+            </View>
+          ))}
+          {!groupedOrders.length && <Text style={styles.empty}>{isLoading ? "Cargando pedidos…" : "Todavía no tienes pedidos de clientes."}</Text>}
+          <Text accessibilityLiveRegion="polite" style={styles.notice}>{notice}</Text>
+        </> : <>
         <Text style={styles.eyebrow}>CATÁLOGO</Text>
         <Text style={styles.title}>Tus productos</Text>
         <Text style={styles.subtitle}>Añade fotos, define precios en COP y administra existencias.</Text>
@@ -173,6 +303,7 @@ export default function SellerDashboardScreen({ navigation }) {
           ))}
           {!products.length && <Text style={styles.empty}>Todavía no hay productos en esta vista.</Text>}
         </View>
+        </>}
       </ScrollView>
     </SafeAreaView>
   );
@@ -186,6 +317,11 @@ const styles = StyleSheet.create({
   brand: { color: colors.text, fontSize: 12, fontWeight: "800", letterSpacing: 1.8 },
   topLink: { color: "#333", fontSize: 12, textDecorationLine: "underline" },
   demoWarning: { marginTop: 4, marginBottom: 24, padding: 13, borderLeftWidth: 3, borderLeftColor: colors.primary, backgroundColor: colors.surface },
+  sectionTabs: { flexDirection: "row", gap: 8, marginBottom: 20 },
+  sectionTab: { minHeight: 40, flex: 1, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "#555" },
+  sectionTabActive: { borderColor: colors.primary, backgroundColor: colors.primary },
+  sectionTabText: { color: colors.text, fontSize: 11, fontWeight: "600" },
+  sectionTabTextActive: { color: "#fff" },
   warningTitle: { color: colors.text, fontSize: 10, fontWeight: "800", letterSpacing: 1 },
   warningCopy: { marginTop: 5, color: "#333", fontSize: 11, lineHeight: 16 },
   eyebrow: { color: colors.muted, fontSize: 9, fontWeight: "700", letterSpacing: 1.6 },
@@ -223,4 +359,20 @@ const styles = StyleSheet.create({
   stockButtonText: { color: colors.text, fontSize: 18 },
   deleteText: { minHeight: 36, paddingTop: 10, color: "#292929", fontSize: 11, textDecorationLine: "underline" },
   empty: { color: "#555", fontSize: 12 },
+  orderCard: { marginBottom: 12, padding: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: "#fff" },
+  orderHeader: { flexDirection: "row", justifyContent: "space-between", gap: 8 },
+  orderTitle: { color: colors.text, fontSize: 13, fontWeight: "700" },
+  orderDate: { color: "#555", fontSize: 10 },
+  orderCustomer: { marginTop: 6, color: colors.text, fontSize: 11, fontWeight: "600" },
+  orderAddress: { marginTop: 4, color: "#444", fontSize: 10, lineHeight: 15 },
+  orderItem: { marginTop: 11, paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.border },
+  orderProduct: { color: colors.text, fontSize: 12, fontWeight: "700" },
+  orderStatus: { marginTop: 5, color: "#444", fontSize: 10 },
+  statusOptions: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  statusOption: { minHeight: 35, justifyContent: "center", paddingHorizontal: 8, borderWidth: 1, borderColor: "#888" },
+  statusOptionActive: { borderColor: colors.primary, backgroundColor: colors.primary },
+  statusOptionText: { color: colors.text, fontSize: 9 },
+  statusOptionTextActive: { color: "#fff" },
+  dateHint: { marginTop: 5, color: "#555", fontSize: 9, lineHeight: 14 },
+  arrival: { marginTop: 6, color: "#205329", fontSize: 10, fontWeight: "700" },
 });

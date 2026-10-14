@@ -5,8 +5,13 @@ export async function getAdminAnalytics() {
   return data;
 }
 
-export async function getAdminUsers(search = "") {
-  const { data } = await apiClient.get("/admin/users", { params: { search } });
+export async function getAdminOrders(status = "") {
+  const { data } = await apiClient.get("/admin/orders", { params: status ? { status } : {} });
+  return data;
+}
+
+export async function getAdminUsers(search = "", role = "") {
+  const { data } = await apiClient.get("/admin/users", { params: { search, role } });
   return data;
 }
 

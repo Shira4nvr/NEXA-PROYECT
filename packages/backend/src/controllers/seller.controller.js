@@ -220,4 +220,122 @@ async function archiveProduct(req, res, next) {
   }
 }
 
-module.exports = { getProfile, listProducts, createProduct, updateProduct, archiveProduct };
+async function listOrders(req, res, next) {
+  try {
+    const profile = await activeSeller(req, res);
+    if (!profile) return;
+    const items = await prisma.orderItem.findMany({
+      where: { variant: { product: { sellerId: profile.id } } },
+      orderBy: { order: { createdAt: "desc" } },
+      include: {
+        order: {
+          select: {
+            id: true,
+            createdAt: true,
+            deliveryLabel: true,
+            deliveryStreet: true,
+            deliveryCity: true,
+            deliveryState: true,
+            deliveryZipCode: true,
+            deliveryCountry: true,
+            user: { select: { name: true, email: true } },
+          },
+        },
+        variant: {
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                sellerId: true,
+                images: { orderBy: { position: "asc" }, take: 1, select: { url: true, altText: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    res.json(items);
+  } catch (err) {
+    next(err);
+  }
+}
+
+const fulfillmentSteps = ["PENDING", "PREPARING", "IN_TRANSIT", "DELIVERED"];
+const colombianToday = () => new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Bogota",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+}).format(new Date());
+
+async function updateOrderItemFulfillment(req, res, next) {
+  try {
+    const profile = await activeSeller(req, res);
+    if (!profile) return;
+    const { status, estimatedArrival } = req.body;
+    if (!fulfillmentSteps.includes(status)) {
+      return res.status(400).json({ error: "Selecciona un estado de preparación o transporte válido" });
+    }
+    let arrivalDate;
+    if (estimatedArrival !== undefined && estimatedArrival !== null && estimatedArrival !== "") {
+      if (typeof estimatedArrival !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(estimatedArrival)) {
+        return res.status(400).json({ error: "La fecha estimada debe usar el formato AAAA-MM-DD" });
+      }
+      arrivalDate = new Date(`${estimatedArrival}T12:00:00.000Z`);
+      if (Number.isNaN(arrivalDate.getTime()) || arrivalDate.toISOString().slice(0, 10) !== estimatedArrival) {
+        return res.status(400).json({ error: "La fecha estimada no es válida" });
+      }
+      if (estimatedArrival < colombianToday()) {
+        return res.status(400).json({ error: "La fecha estimada no puede estar en el pasado" });
+      }
+    }
+
+    const item = await prisma.orderItem.findFirst({
+      where: { id: req.params.orderItemId, variant: { product: { sellerId: profile.id } } },
+      select: {
+        id: true,
+        fulfillmentStatus: true,
+        estimatedArrival: true,
+        order: { select: { status: true } },
+      },
+    });
+    if (!item) return res.status(404).json({ error: "Artículo de pedido no encontrado" });
+    if (item.order.status === "CANCELLED") {
+      return res.status(409).json({ error: "No se puede modificar la logística de un pedido cancelado" });
+    }
+    const currentIndex = fulfillmentSteps.indexOf(item.fulfillmentStatus);
+    const nextIndex = fulfillmentSteps.indexOf(status);
+    if (nextIndex < currentIndex || nextIndex > currentIndex + 1) {
+      return res.status(409).json({ error: "Avanza el pedido un estado a la vez" });
+    }
+    if (status === "IN_TRANSIT" && !arrivalDate && !item.estimatedArrival) {
+      return res.status(400).json({ error: "Agenda una fecha estimada antes de marcar el pedido en transporte" });
+    }
+    if (item.fulfillmentStatus === "DELIVERED" && (status !== "DELIVERED" || arrivalDate)) {
+      return res.status(409).json({ error: "El pedido entregado ya no admite cambios de envío" });
+    }
+
+    const updated = await prisma.orderItem.update({
+      where: { id: item.id },
+      data: {
+        fulfillmentStatus: status,
+        ...(arrivalDate ? { estimatedArrival: arrivalDate } : {}),
+      },
+      select: { id: true, fulfillmentStatus: true, estimatedArrival: true },
+    });
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = {
+  getProfile,
+  listProducts,
+  createProduct,
+  updateProduct,
+  archiveProduct,
+  listOrders,
+  updateOrderItemFulfillment,
+};

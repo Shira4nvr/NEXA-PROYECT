@@ -26,19 +26,63 @@ async function getAnalytics(req, res, next) {
   }
 }
 
+async function listOrders(req, res, next) {
+  try {
+    const status = typeof req.query.status === "string" ? req.query.status.toUpperCase() : "";
+    const validStatuses = ["PENDING", "PAID", "SHIPPED", "DELIVERED", "CANCELLED"];
+    if (status && !validStatuses.includes(status)) {
+      return res.status(400).json({ error: "El estado de pedido no es válido" });
+    }
+    const orders = await prisma.order.findMany({
+      where: status ? { status } : {},
+      orderBy: { createdAt: "desc" },
+      take: 100,
+      include: {
+        user: { select: { id: true, name: true, email: true } },
+        payment: { select: { method: true, status: true } },
+        items: {
+          include: {
+            variant: {
+              include: {
+                product: {
+                  select: {
+                    id: true,
+                    name: true,
+                    seller: { select: { storeName: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    res.json(orders);
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function listUsers(req, res, next) {
   try {
     const search = typeof req.query.search === "string" ? req.query.search.trim().slice(0, 100) : "";
+    const requestedRole = typeof req.query.role === "string" ? req.query.role.toUpperCase() : "";
+    if (requestedRole && !["CUSTOMER", "SELLER", "ADMIN"].includes(requestedRole)) {
+      return res.status(400).json({ error: "El filtro de rol no es válido" });
+    }
     const normalizedRole = search.toUpperCase();
     const roleFilter = ["CUSTOMER", "SELLER", "ADMIN"].includes(normalizedRole) ? [{ role: normalizedRole }] : [];
     const users = await prisma.user.findMany({
-      where: search ? {
-        OR: [
-          { email: { contains: search, mode: "insensitive" } },
-          { name: { contains: search, mode: "insensitive" } },
-          ...roleFilter,
-        ],
-      } : {},
+      where: {
+        ...(requestedRole ? { role: requestedRole } : {}),
+        ...(search ? {
+          OR: [
+            { email: { contains: search, mode: "insensitive" } },
+            { name: { contains: search, mode: "insensitive" } },
+            ...roleFilter,
+          ],
+        } : {}),
+      },
       select: {
         id: true,
         name: true,
@@ -99,4 +143,4 @@ async function setSellerStatus(req, res, next) {
   }
 }
 
-module.exports = { getAnalytics, listUsers, setUserStatus, setSellerStatus };
+module.exports = { getAnalytics, listOrders, listUsers, setUserStatus, setSellerStatus };

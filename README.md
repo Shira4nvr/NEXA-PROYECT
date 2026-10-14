@@ -1,60 +1,43 @@
-# Shein Clone — Arquitectura Base
+# NEXO — Marketplace multiplataforma
 
-App de e-commerce con dos clientes (movil y escritorio) que comparten la MISMA
-logica de negocio (llamadas a API, estado global, validaciones, formato de moneda).
+Monorepo con backend PostgreSQL/Prisma, aplicación de escritorio Electron y
+aplicación móvil Expo para Android/iOS. Los clientes consumen la misma API y
+comparten lógica de negocio mediante `packages/shared`.
 
 ## Estructura
 
+```text
+packages/
+├── backend/  API REST, Prisma y PostgreSQL
+├── desktop/  Aplicación de escritorio Electron + React + Vite
+├── mobile/   Aplicación Android/iOS con React Native + Expo
+└── shared/   Cliente API, estado y utilidades compartidas
 ```
-shein-clone/
-├── packages/
-│   ├── shared/     -> Logica compartida (API, stores, utils). NO tiene UI.
-│   ├── mobile/     -> App movil con React Native + Expo (iOS/Android)
-│   └── desktop/    -> App de escritorio con Electron + React + Vite (Windows/Mac/Linux)
-```
 
-## Por que este enfoque
+## Desarrollo local
 
-- `shared` no sabe nada de React Native ni de Electron: solo hace fetch de datos,
-  guarda estado (Zustand) y expone funciones puras. Esto evita duplicar la logica
-  de negocio en cada plataforma.
-- `mobile` y `desktop` SOLO se encargan de la interfaz visual (pantallas,
-  componentes, navegacion) y consumen `shared`.
-- Cuando cambies una regla de negocio (ej: como se calcula el total del carrito,
-  o como se valida el login) la cambias UNA vez en `shared` y se refleja en
-  ambas apps.
+Instala las dependencias desde la raíz con `npm install`, configura PostgreSQL
+y las variables del backend siguiendo [la guía del backend](./packages/backend/README.md).
+Después inicia cada proceso desde la raíz:
 
-## Como instalar (cuando tengas internet/npm disponible)
-
-```bash
-# En la raiz del proyecto
-npm install
-
-# Correr la app movil (abre Expo, escaneas QR con tu celular)
-npm run mobile
-
-# Correr la app de escritorio (abre ventana de Electron)
+```powershell
+npm run backend
 npm run desktop
+npm run mobile
 ```
 
-## Backend
+En Expo Go, la app móvil usa la dirección de red del servidor Expo para acceder
+al backend. Un teléfono físico y un emulador no deben usar `localhost` para
+conectarse a otro dispositivo.
 
-Este esqueleto asume que existe una API REST (ej: Node.js + Express + PostgreSQL)
-con endpoints como:
+## Instaladores y despliegue
 
-- `GET /products`
-- `GET /products/:id`
-- `POST /auth/login`
-- `GET /cart`, `POST /cart/items`, etc.
-
-Mientras no tengas el backend listo, `packages/shared/src/api/client.js` apunta
-a una URL de ejemplo y los servicios devuelven datos de prueba (mock) para que
-puedas seguir construyendo la interfaz sin bloquearte.
-
-## Siguientes pasos sugeridos
-
-1. Definir el backend (API) y reemplazar los mocks en `packages/shared/src/api`.
-2. Agregar autenticacion real (JWT) en `useAuthStore`.
-3. Agregar pasarela de pago (Stripe, MercadoPago, etc.) en desktop y mobile.
-4. Agregar notificaciones push (Expo Notifications) en mobile.
-5. Empaquetar desktop para distribucion (`electron-builder`) y mobile con EAS Build.
+- **Windows:** configura `VITE_API_URL` y ejecuta
+  `npm run desktop:build`. El instalador queda en `release/`. Consulta
+  [la guía de escritorio](./packages/desktop/README.md) para firma y requisitos
+  de macOS.
+- **Android/iOS:** configura `EXPO_PUBLIC_API_URL` con la URL HTTPS pública de
+  la API, incluyendo `/api`, y usa EAS Build. Consulta
+  [la guía móvil](./packages/mobile/README.md) para APK/AAB, iOS y credenciales.
+- Las URLs de ejemplo no son servidores reales. No se debe distribuir una
+  compilación hasta configurar y probar el dominio de producción del backend.

@@ -17,8 +17,17 @@ const apiBase = `http://localhost:${process.env.PORT || 4000}/api`;
 const suffix = crypto.randomUUID();
 const emails = [`api-seller-${suffix}@example.test`, `api-customer-${suffix}@example.test`, `api-admin-${suffix}@example.test`];
 const userIds = [];
+const categoryIds = [];
 let productId;
 let imagePath;
+const orderIds = [];
+const addressIds = [];
+const colombianToday = () => new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Bogota",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+}).format(new Date());
 
 async function request(route, token, options = {}) {
   const headers = { ...(options.headers || {}) };
@@ -86,8 +95,15 @@ async function main() {
     body: JSON.stringify({ status: "ACTIVE" }),
   });
 
-  const categories = await expectOk("/products/categories");
-  assert.ok(categories.length, "Debe existir al menos una categoría");
+  let categories = await expectOk("/products/categories");
+  if (!categories.length) {
+    const category = await prisma.category.create({
+      data: { name: `Categoría temporal ${suffix.slice(0, 8)}`, slug: `api-test-${suffix}` },
+      select: { id: true, name: true },
+    });
+    categoryIds.push(category.id);
+    categories = [category];
+  }
   const form = new FormData();
   form.append("name", "Producto temporal API");
   form.append("categoryId", categories[0].id);
@@ -112,16 +128,118 @@ async function main() {
   });
   assert.equal(cartItem.quantity, 2);
 
+  const address = await expectOk("/addresses", customerToken, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      label: "Dirección de prueba",
+      street: "Calle de integración 123",
+      city: "Bogotá",
+      state: "Bogotá D.C.",
+      zipCode: "110111",
+      country: "CO",
+      isDefault: true,
+    }),
+  });
+  addressIds.push(address.id);
+  const alternateAddress = await expectOk("/addresses", customerToken, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      label: "Otra dirección de prueba",
+      street: "Carrera secundaria 456",
+      city: "Medellín",
+      state: "Antioquia",
+      zipCode: "050001",
+      country: "CO",
+    }),
+  });
+  addressIds.push(alternateAddress.id);
+  const transferDefault = await expectOk(`/addresses/${address.id}`, customerToken, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ isDefault: false }),
+  });
+  assert.equal(transferDefault.isDefault, false);
+  assert.equal((await expectOk("/addresses", customerToken)).find((item) => item.id === alternateAddress.id).isDefault, true, "Debe conservarse una sola dirección principal");
+  await expectOk(`/addresses/${address.id}`, customerToken, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ isDefault: true }),
+  });
+  const order = await expectOk("/orders", customerToken, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ addressId: address.id }),
+  });
+  orderIds.push(order.orderId);
+  const sellerOrders = await expectOk("/seller/orders", sellerToken);
+  const sellerOrderItem = sellerOrders.find((item) => item.order.id === order.orderId);
+  assert.ok(sellerOrderItem, "El vendedor debe ver su artículo del pedido");
+  assert.equal(sellerOrderItem.fulfillmentStatus, "PENDING");
+
+  const prepareItem = await expectOk(`/seller/orders/items/${sellerOrderItem.id}/fulfillment`, sellerToken, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "PREPARING" }),
+  });
+  assert.equal(prepareItem.fulfillmentStatus, "PREPARING");
+  const customerFulfillmentUpdate = await request(`/seller/orders/items/${sellerOrderItem.id}/fulfillment`, customerToken, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "IN_TRANSIT", estimatedArrival: colombianToday() }),
+  });
+  assert.equal(customerFulfillmentUpdate.response.status, 403, "Un cliente no debe modificar la logística");
+  const withoutArrival = await request(`/seller/orders/items/${sellerOrderItem.id}/fulfillment`, sellerToken, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "IN_TRANSIT" }),
+  });
+  assert.equal(withoutArrival.response.status, 400, "El pedido requiere fecha estimada para iniciar transporte");
+
+  const estimatedArrival = colombianToday();
+  await expectOk(`/seller/orders/items/${sellerOrderItem.id}/fulfillment`, sellerToken, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "IN_TRANSIT", estimatedArrival }),
+  });
+  const customerOrders = await expectOk("/orders", customerToken);
+  assert.equal(customerOrders[0].items[0].fulfillmentStatus, "IN_TRANSIT");
+  assert.ok(customerOrders[0].items[0].estimatedArrival, "El cliente debe ver la fecha estimada");
+  assert.equal(customerOrders[0].deliveryStreet, "Calle de integración 123");
+  const adminCustomerOrders = await request("/orders", adminToken);
+  assert.equal(adminCustomerOrders.response.status, 403, "Un administrador no debe usar el endpoint de clientes");
+
+  const updatedAddress = await expectOk(`/addresses/${address.id}`, customerToken, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ street: "Dirección corregida 456" }),
+  });
+  assert.equal(updatedAddress.street, "Dirección corregida 456");
+  const foreignAddressUpdate = await request(`/addresses/${address.id}`, sellerToken, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ street: "Cambio no autorizado" }),
+  });
+  assert.equal(foreignAddressUpdate.response.status, 404, "Un vendedor no debe editar direcciones de clientes");
+  assert.equal((await expectOk("/orders", customerToken))[0].deliveryStreet, "Calle de integración 123", "Editar la libreta no debe modificar el domicilio histórico del pedido");
+  const deleteUsedAddress = await request(`/addresses/${address.id}`, customerToken, { method: "DELETE" });
+  assert.equal(deleteUsedAddress.response.status, 409, "No se debe borrar una dirección vinculada a un pedido");
+
   const analytics = await expectOk("/admin/analytics", adminToken);
   assert.ok(analytics.users >= 3);
   const accounts = await expectOk(`/admin/users?search=${encodeURIComponent(suffix)}`, adminToken);
   assert.equal(accounts.length, 3);
+  const sellerAccounts = await expectOk("/admin/users?role=SELLER", adminToken);
+  assert.ok(sellerAccounts.some((account) => account.id === seller.user.id), "El filtro de vendedores debe incluir el vendedor temporal");
+  const adminOrders = await expectOk("/admin/orders?status=PENDING", adminToken);
+  assert.ok(adminOrders.some((item) => item.id === order.orderId), "La sección administrativa debe incluir el pedido");
 
   await expectOk(`/seller/products/${product.id}`, sellerToken, { method: "DELETE" });
   const publicProducts = await expectOk("/products?search=Producto%20temporal%20API");
   assert.equal(publicProducts.some((item) => item.id === product.id), false, "Un producto archivado no debe aparecer públicamente");
 
-  console.log("API integration OK: registro/consentimientos, roles, vendedor, imágenes, stock, carrito, analíticas y usuarios.");
+  console.log("API integration OK: registro, roles, inventario, carrito, direcciones, compra, seguimiento, analíticas y usuarios.");
 }
 
 main()
@@ -130,7 +248,14 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
+    if (orderIds.length) {
+      await prisma.orderItem.deleteMany({ where: { orderId: { in: orderIds } } }).catch(() => {});
+      await prisma.payment.deleteMany({ where: { orderId: { in: orderIds } } }).catch(() => {});
+      await prisma.order.deleteMany({ where: { id: { in: orderIds } } }).catch(() => {});
+    }
+    if (addressIds.length) await prisma.address.deleteMany({ where: { id: { in: addressIds } } }).catch(() => {});
     if (productId) await prisma.product.deleteMany({ where: { id: productId } }).catch(() => {});
+    if (categoryIds.length) await prisma.category.deleteMany({ where: { id: { in: categoryIds } } }).catch(() => {});
     if (userIds.length) {
       await prisma.cartItem.deleteMany({ where: { userId: { in: userIds } } }).catch(() => {});
       await prisma.user.deleteMany({ where: { id: { in: userIds } } }).catch(() => {});

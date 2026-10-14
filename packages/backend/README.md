@@ -60,14 +60,23 @@ Todas las rutas protegidas requieren `Authorization: Bearer <token>`. Los tokens
 | PATCH/DELETE | `/api/seller/products/:productId` | Vendedor propietario | Edición, stock y archivado lógico |
 | GET | `/api/seller/profile` | Vendedor | Estado del perfil |
 | GET | `/api/admin/analytics` | Admin | Órdenes, valor agregado, productos y usuarios |
+| GET | `/api/admin/orders?status=` | Admin | Consulta de pedidos con filtro por estado y avance logístico |
 | GET | `/api/admin/users?search=` | Admin | Búsqueda de cuentas |
 | PATCH | `/api/admin/users/:userId/status` | Admin | Activar/desactivar cuenta |
 | PATCH | `/api/admin/sellers/:sellerId/status` | Admin | Aprobar/suspender vendedor |
 | GET/POST/PATCH/DELETE | `/api/cart/...` | Autenticado | Carrito por variante y stock disponible |
+| GET | `/api/orders` | Cliente autenticado | Historial de compras y seguimiento por artículo |
+| POST | `/api/orders` | Cliente autenticado | Crear pedido con una dirección guardada |
+| GET/POST/PATCH/DELETE | `/api/addresses/...` | Autenticado | Consultar, guardar, corregir y eliminar direcciones propias |
+| GET | `/api/locations/cities` | Público | Municipios y departamentos de Colombia para formularios de entrega |
+| GET | `/api/seller/orders` | Vendedor activo | Pedidos que contienen productos de su tienda |
+| PATCH | `/api/seller/orders/items/:orderItemId/fulfillment` | Vendedor propietario | Alistamiento, transporte y fecha estimada de llegada |
 
 El registro de vendedor requiere `storeName`, `legalName`, `identificationNumber`, `noticeAddress` y `contactPhone`, además de correo, contraseña y aceptación separada de términos/privacidad. El registro público no permite crear administradores.
 
 La publicación de producto usa `multipart/form-data`: `name`, `categoryId`, `price` (entero COP), `stock`, `imageAlt` e `image` (JPEG/PNG/WebP, máximo 5 MB). Las imágenes quedan en `packages/backend/uploads` para desarrollo; configura almacenamiento privado externo antes de desplegar.
+
+El seguimiento logístico se guarda por artículo, para que cada vendedor solo pueda actualizar los productos de su tienda aunque una compra incluya artículos de varias tiendas. Los estados avanzan de `PENDING` a `PREPARING`, `IN_TRANSIT` y `DELIVERED`; se exige programar una fecha de llegada antes de marcar el transporte. Cada pedido conserva una copia de los datos de entrega, así que corregir una dirección guardada no cambia pedidos anteriores. El catálogo de ciudades consulta la API pública de api-colombia.com y conserva los resultados en caché durante una hora.
 
 ## Crear el primer administrador
 

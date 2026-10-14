@@ -1,33 +1,69 @@
 import React, { useEffect, useState } from "react";
-import { archiveSellerProduct, createSellerProduct, getCategories, getSellerProducts, getSellerProfile, updateSellerProduct } from "@shein-clone/shared";
+import {
+  archiveSellerProduct,
+  createSellerProduct,
+  getCategories,
+  getPublicAssetUrl,
+  getSellerOrders,
+  getSellerProducts,
+  getSellerProfile,
+  updateSellerOrderItemFulfillment,
+  updateSellerProduct,
+} from "@shein-clone/shared";
 
 const money = new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 });
+const colombianToday = () => new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Bogota",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+}).format(new Date());
 
-export default function SellerDashboard() {
+const FULFILLMENT_LABELS = { PENDING: "Pedido recibido", PREPARING: "Alistamiento", IN_TRANSIT: "En transporte", DELIVERED: "Entregado" };
+
+export default function SellerDashboard({ section = "products" }) {
   const [products, setProducts] = useState([]);
+  const [orders, setOrders] = useState([]);
   const [categories, setCategories] = useState([]);
   const [profile, setProfile] = useState(null);
   const [imagePreview, setImagePreview] = useState("");
   const [imageFile, setImageFile] = useState(null);
   const [notice, setNotice] = useState("");
+  const [fulfillmentDrafts, setFulfillmentDrafts] = useState({});
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     let active = true;
-    Promise.all([getSellerProfile(), getCategories()])
-      .then(async ([sellerProfile, availableCategories]) => {
-        const sellerProducts = sellerProfile.status === "ACTIVE" ? await getSellerProducts() : [];
+    getSellerProfile()
+      .then(async (sellerProfile) => {
         if (!active) return;
         setProfile(sellerProfile);
-        setCategories(availableCategories);
-        setProducts(sellerProducts);
+        if (sellerProfile.status !== "ACTIVE") {
+          setProducts([]);
+          setOrders([]);
+          return;
+        }
+        if (section === "products") {
+          const [availableCategories, sellerProducts] = await Promise.all([getCategories(), getSellerProducts()]);
+          if (!active) return;
+          setCategories(availableCategories);
+          setProducts(sellerProducts);
+        } else {
+          const sellerOrders = await getSellerOrders();
+          if (!active) return;
+          setOrders(sellerOrders);
+          setFulfillmentDrafts(Object.fromEntries(sellerOrders.map((item) => [item.id, {
+            status: item.fulfillmentStatus,
+            estimatedArrival: item.estimatedArrival ? item.estimatedArrival.slice(0, 10) : "",
+          }])));
+        }
       })
       .catch((error) => {
         if (active) setNotice(error.response?.data?.error || "No se pudo conectar con el módulo de vendedor.");
       })
       .finally(() => { if (active) setIsLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [section]);
 
   function selectImage(event) {
     const file = event.target.files?.[0];
@@ -89,17 +125,43 @@ export default function SellerDashboard() {
     }
   }
 
+  async function saveFulfillment(item) {
+    const draft = fulfillmentDrafts[item.id] || {};
+    try {
+      const updated = await updateSellerOrderItemFulfillment(item.id, draft.status, draft.estimatedArrival || undefined);
+      setOrders((current) => current.map((entry) => entry.id === item.id ? { ...entry, ...updated } : entry));
+      setFulfillmentDrafts((current) => ({
+        ...current,
+        [item.id]: {
+          status: updated.fulfillmentStatus,
+          estimatedArrival: updated.estimatedArrival ? updated.estimatedArrival.slice(0, 10) : "",
+        },
+      }));
+      setNotice("El seguimiento del pedido se actualizó.");
+    } catch (error) {
+      setNotice(error.response?.data?.error || "No se pudo actualizar el seguimiento del pedido.");
+    }
+  }
+
+  const groupedOrders = [...orders.reduce((groups, item) => {
+    const group = groups.get(item.order.id) || { order: item.order, items: [] };
+    group.items.push(item);
+    groups.set(item.order.id, group);
+    return groups;
+  }, new Map()).values()];
+
   return (
     <div className="dashboard-content">
       <div className="page-title-row">
-        <div><p className="section-eyebrow">CATÁLOGO</p><h1>Productos</h1><p className="muted-copy">Gestiona publicaciones, precios y existencias de muestra.</p></div>
-          <span className="data-badge">{products.length} productos</span>
+        <div><p className="section-eyebrow">{section === "orders" ? "VENTAS Y LOGÍSTICA" : "CATÁLOGO"}</p><h1>{section === "orders" ? "Pedidos de clientes" : "Productos e inventario"}</h1><p className="muted-copy">{section === "orders" ? "Prepara cada pedido, agenda su llegada y actualiza el avance del transporte." : "Gestiona publicaciones, precios y existencias de tu tienda."}</p></div>
+          <span className="data-badge">{section === "orders" ? `${groupedOrders.length} pedidos` : `${products.length} productos`}</span>
       </div>
 
         {profile?.status === "PENDING" && <div className="legal-draft-alert" role="status">Tu perfil de vendedor está pendiente de aprobación. No podrás publicar productos hasta que administración lo active.</div>}
         {profile?.status === "SUSPENDED" && <div className="legal-draft-alert" role="alert">El perfil de vendedor está suspendido. Contacta a administración.</div>}
-        {isLoading && <p className="muted-copy">Cargando inventario…</p>}
+        {isLoading && <p className="muted-copy">{section === "orders" ? "Cargando pedidos…" : "Cargando inventario…"}</p>}
 
+      {section === "products" && <>
       <section className="workspace-section" aria-labelledby="add-product-title">
         <div className="section-heading"><div><p className="section-eyebrow">NUEVA PUBLICACIÓN</p><h2 id="add-product-title">Añadir producto</h2></div></div>
         <form className="product-form" onSubmit={addProduct}>
@@ -137,6 +199,53 @@ export default function SellerDashboard() {
           {products.length === 0 && <p className="empty-state">No hay productos en esta vista de demostración.</p>}
         </div>
       </section>
+      </>}
+
+      {section === "orders" && <section className="workspace-section" aria-labelledby="seller-orders-title">
+        <div className="section-heading"><div><p className="section-eyebrow">PREPARACIÓN Y ENTREGA</p><h2 id="seller-orders-title">Pedidos recibidos</h2></div></div>
+        {groupedOrders.map(({ order, items: orderItems }) => (
+          <article className="seller-order-card" key={order.id}>
+            <header className="seller-order-header">
+              <div><span className="section-eyebrow">PEDIDO</span><strong>{order.id}</strong><small>{new Date(order.createdAt).toLocaleString("es-CO", { dateStyle: "medium", timeStyle: "short" })}</small></div>
+              <div><span className="section-eyebrow">CLIENTE</span><strong>{order.user.name || "Cliente"}</strong><small>{order.user.email}</small></div>
+            </header>
+            <div className="seller-shipping-address">
+              <strong>Dirección de entrega</strong>
+              <span>{order.deliveryLabel} · {order.deliveryStreet}, {order.deliveryCity}, {order.deliveryState} · {order.deliveryZipCode}</span>
+            </div>
+            {orderItems.map((item) => {
+              const product = item.variant.product;
+              const draft = fulfillmentDrafts[item.id] || { status: item.fulfillmentStatus, estimatedArrival: "" };
+              const nextStages = {
+                PENDING: ["PENDING", "PREPARING"],
+                PREPARING: ["PREPARING", "IN_TRANSIT"],
+                IN_TRANSIT: ["IN_TRANSIT", "DELIVERED"],
+                DELIVERED: ["DELIVERED"],
+              }[item.fulfillmentStatus];
+              return (
+                <div className="seller-order-item" key={item.id}>
+                  {product.images[0] && <img src={getPublicAssetUrl(product.images[0].url)} alt={product.images[0].altText || product.name} />}
+                  <div className="seller-order-product"><strong>{product.name}</strong><span>{item.variant.size} · {item.variant.color} · {item.quantity} unidad(es)</span><span>{formatCurrency(item.priceAtOrder * item.quantity)}</span></div>
+                  <div className="seller-fulfillment-controls">
+                    <label>Estado del envío
+                      <select value={draft.status} disabled={item.fulfillmentStatus === "DELIVERED"} onChange={(event) => setFulfillmentDrafts((current) => ({ ...current, [item.id]: { ...draft, status: event.target.value } }))}>
+                        {nextStages.map((status) => <option value={status} key={status}>{FULFILLMENT_LABELS[status]}</option>)}
+                      </select>
+                    </label>
+                    <label>Fecha estimada de llegada
+                      <input type="date" min={colombianToday()} value={draft.estimatedArrival} disabled={item.fulfillmentStatus === "DELIVERED"} onChange={(event) => setFulfillmentDrafts((current) => ({ ...current, [item.id]: { ...draft, estimatedArrival: event.target.value } }))} />
+                    </label>
+                    <button className="solid-action" type="button" disabled={item.fulfillmentStatus === "DELIVERED"} onClick={() => saveFulfillment(item)}>{item.fulfillmentStatus === "DELIVERED" ? "Pedido entregado" : "Guardar seguimiento"}</button>
+                    <small>Estado actual: {FULFILLMENT_LABELS[item.fulfillmentStatus]}</small>
+                  </div>
+                </div>
+              );
+            })}
+          </article>
+        ))}
+        {!groupedOrders.length && <p className="empty-state">{isLoading ? "Cargando pedidos…" : "Aún no tienes pedidos para preparar."}</p>}
+        <p className="form-status" aria-live="polite">{notice}</p>
+      </section>}
     </div>
   );
 }

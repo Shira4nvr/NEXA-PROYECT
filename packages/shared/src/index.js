@@ -6,6 +6,8 @@ export * from "./api/products";
 export * from "./api/auth";
 export * from "./api/cart";
 export * from "./api/orders";
+export * from "./api/addresses";
+export * from "./api/locations";
 export * from "./api/admin";
 export * from "./api/seller";
 export * from "./store/useAuthStore";

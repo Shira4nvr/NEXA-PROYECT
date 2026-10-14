@@ -17,6 +17,7 @@ export default function ProfileScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <Text style={styles.name}>{user?.name ?? "Invitado"}</Text>
+      {user && <Button title="Mis pedidos y direcciones" color={colors.primary} onPress={() => navigation.getParent()?.navigate("Orders")} />}
       {user && <Button title="Cerrar sesión" color={colors.primary} onPress={handleLogout} />}
     </View>
   );

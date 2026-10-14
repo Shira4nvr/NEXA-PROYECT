@@ -8,6 +8,8 @@ const cartRoutes = require("./routes/cart.routes");
 const ordersRoutes = require("./routes/orders.routes");
 const sellerRoutes = require("./routes/seller.routes");
 const adminRoutes = require("./routes/admin.routes");
+const addressesRoutes = require("./routes/addresses.routes");
+const locationsRoutes = require("./routes/locations.routes");
 // const edgeRoutes = require("./routes/edge.routes");
 const { errorHandler } = require("./middleware/errorHandler");
 const { uploadsDirectory } = require("./middleware/imageUpload");
@@ -26,6 +28,8 @@ app.use("/api/cart", cartRoutes);
 app.use("/api/orders", ordersRoutes);
 app.use("/api/seller", sellerRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/addresses", addressesRoutes);
+app.use("/api/locations", locationsRoutes);
 // app.use("/api/edge", edgeRoutes);
 
 // Siempre al final: captura cualquier error de los controladores

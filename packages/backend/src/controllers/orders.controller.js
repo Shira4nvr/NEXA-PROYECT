@@ -17,9 +17,9 @@ function validateAddress(address) {
 
 async function createOrder(req, res, next) {
   try {
-    const { address, paymentMethod = "CASH_ON_DELIVERY" } = req.body;
+    const { addressId, address, paymentMethod = "CASH_ON_DELIVERY" } = req.body;
 
-    if (!validateAddress(address)) {
+    if ((!addressId && !validateAddress(address)) || (addressId && typeof addressId !== "string")) {
       return res.status(400).json({ error: "Completa todos los datos de entrega" });
     }
 
@@ -54,18 +54,21 @@ async function createOrder(req, res, next) {
         };
       }));
 
-      const addressRecord = await tx.address.create({
-        data: {
-          userId: req.userId,
-          label: address.label.trim(),
-          street: address.street.trim(),
-          city: address.city.trim(),
-          state: address.state.trim(),
-          zipCode: address.zipCode.trim(),
-          country: address.country.trim().toUpperCase(),
-          isDefault: true,
-        },
-      });
+      const addressRecord = addressId
+        ? await tx.address.findFirst({ where: { id: addressId, userId: req.userId } })
+        : await tx.address.create({
+            data: {
+              userId: req.userId,
+              label: address.label.trim(),
+              street: address.street.trim(),
+              city: address.city.trim(),
+              state: address.state.trim(),
+              zipCode: address.zipCode.trim(),
+              country: address.country.trim().toUpperCase(),
+              isDefault: true,
+            },
+          });
+      if (!addressRecord) throw Object.assign(new Error("La dirección seleccionada no existe"), { status: 404 });
 
       const order = await tx.order.create({
         data: {
@@ -73,6 +76,12 @@ async function createOrder(req, res, next) {
           addressId: addressRecord.id,
           status: "PENDING",
           total: items.reduce((sum, item) => sum + item.priceAtOrder * item.quantity, 0),
+          deliveryLabel: addressRecord.label,
+          deliveryStreet: addressRecord.street,
+          deliveryCity: addressRecord.city,
+          deliveryState: addressRecord.state,
+          deliveryZipCode: addressRecord.zipCode,
+          deliveryCountry: addressRecord.country,
           items: {
             create: items.map(({ variantId, quantity, priceAtOrder }) => ({
               variantId,
@@ -112,11 +121,42 @@ async function createOrder(req, res, next) {
       payment: orderData.payment,
     });
   } catch (err) {
-    if (err.status === 409) {
-      return res.status(409).json({ error: err.message });
+    if (err.status) {
+      return res.status(err.status).json({ error: err.message });
     }
     next(err);
   }
 }
 
-module.exports = { createOrder };
+async function listCustomerOrders(req, res, next) {
+  try {
+    const orders = await prisma.order.findMany({
+      where: { userId: req.userId },
+      orderBy: { createdAt: "desc" },
+      include: {
+        items: {
+          include: {
+            variant: {
+              include: {
+                product: {
+                  select: {
+                    id: true,
+                    name: true,
+                    images: { orderBy: { position: "asc" }, take: 1, select: { url: true, altText: true } },
+                    seller: { select: { storeName: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        payment: { select: { method: true, status: true } },
+      },
+    });
+    res.json(orders);
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { createOrder, listCustomerOrders };

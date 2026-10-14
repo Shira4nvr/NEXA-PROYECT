@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { View, FlatList, StyleSheet } from "react-native";
+import { View, FlatList, StyleSheet, Text } from "react-native";
 import { useProductStore } from "@shein-clone/shared";
 import ProductCard from "../components/ProductCard";
 import { colors } from "../theme/colors";
