@@ -1,6 +1,9 @@
 # Backend — Node.js + Express + Prisma + PostgreSQL (AWS RDS)
 
-API REST para la app, conectada a una base de datos PostgreSQL alojada en AWS RDS.
+API REST para las aplicaciones, conectada a PostgreSQL mediante Prisma.
+En producción, aloja el backend dentro de la VPC de RDS y conserva la base de
+datos privada. Los clientes de escritorio y móvil se conectan a la API HTTPS,
+nunca directamente a PostgreSQL.
 
 ## Instalacion (primera vez)
 
@@ -9,23 +12,26 @@ cd packages/backend
 cp .env.example .env
 ```
 
-Edita `.env` y pon tu `DATABASE_URL` real de RDS (usuario, password y endpoint
-que copiaste de la consola de AWS).
+Edita `.env` para apuntar `DATABASE_URL` a una base de desarrollo accesible
+desde esta máquina. No copies credenciales de producción en el repositorio ni
+en una aplicación cliente.
 
 ```bash
 npm install
 npx prisma migrate dev --name init
-npm run seed
 ```
 
-Esto:
+En desarrollo, estos comandos:
 1. Instala dependencias (express, prisma, bcrypt, jwt, etc.)
-2. Crea las tablas en tu base de datos de RDS segun `schema.prisma`
-3. Llena la tabla de productos con datos de ejemplo
+2. Crea las tablas de desarrollo en PostgreSQL segun `schema.prisma`
 
-Si `prisma migrate dev` falla con timeout o "connection refused", revisa que
-el Security Group de tu instancia RDS tenga abierto el puerto 5432 para tu IP
-(ver seccion de troubleshooting mas abajo).
+`npm run seed` carga productos de muestra, pero elimina antes los datos
+existentes; ejecútalo solo en una base de desarrollo desechable y vacía.
+
+`prisma migrate dev` es para desarrollo. Para aplicar migraciones en un
+entorno desplegado, usa `npx prisma migrate deploy` desde el backend con su
+`DATABASE_URL` de producción inyectada por el gestor de secretos del servidor.
+No ejecutes `npm run seed` en una base que ya contenga datos.
 
 ## Correr el servidor
 
@@ -115,25 +121,46 @@ npx prisma studio
 
 Abre una interfaz web en el navegador para ver/editar las tablas directamente.
 
-## Troubleshooting conexion a AWS RDS
+## Conexión recomendada a AWS RDS
 
-- **"Can't reach database server"**: revisa el Security Group de tu instancia
-  RDS -> Inbound rules -> debe permitir el puerto 5432 desde tu IP actual
-  (tu IP cambia si reinicias tu router, revisa "My IP" de nuevo en la regla).
-- **"Public access" en No**: si tu instancia no es publica, solo podras
-  conectarte desde dentro de la misma VPC (ej: un servidor EC2), no desde
-  tu PC local.
-- **Contrasena con caracteres especiales**: si tu password tiene simbolos
-  como `@` o `#`, debes codificarlos en la URL (URL-encode), o Prisma no
-  podra parsear el `DATABASE_URL` correctamente.
+Mantén la instancia RDS en subredes privadas con **Public access = No**. El
+backend es el único componente de la aplicación que necesita acceso a la base:
 
-## Cuando despliegues el backend (no solo la base de datos)
+1. Despliega el backend en AWS dentro de la misma VPC (por ejemplo, en ECS
+   Fargate o EC2) y configura un endpoint HTTPS público para la API mediante un
+   Application Load Balancer y un certificado TLS.
+2. En el Security Group de RDS, permite TCP/5432 **solo desde el Security
+   Group del backend**. No abras PostgreSQL a `0.0.0.0/0` ni a Internet.
+3. Inyecta `DATABASE_URL` y un `JWT_SECRET` aleatorio desde AWS Secrets Manager
+   o el almacén de secretos del entorno. Usa un usuario PostgreSQL dedicado a
+   la aplicación, no el usuario maestro `postgres`.
+4. Aplica las migraciones con `npx prisma migrate deploy` como paso de release
+   controlado. Haz una copia de seguridad y confirma el estado de la instancia
+   antes de migrar.
+5. Configura almacenamiento persistente y privado para imágenes de producto
+   (por ejemplo, S3); el directorio local `uploads/` es solo para desarrollo y
+   no debe ser el almacenamiento de producción.
+6. Configura monitorización, copias de seguridad automáticas, rotación de
+   credenciales y una comprobación de salud de `/health`.
+7. Apunta las aplicaciones de escritorio y móvil a `https://<dominio-api>/api`.
+   No pongas `DATABASE_URL`, contraseñas de PostgreSQL ni claves AWS en esos
+   clientes.
 
-Esta guia cubre solo la BASE DE DATOS en RDS. Para correr el servidor Express
-en si mismo en AWS, las opciones mas comunes son EC2 (una maquina virtual
-donde corres `npm start`) o Elastic Beanstalk (mas administrado). Si prefieres
-algo mas simple que EC2, tambien puedes desplegar el backend en Railway/Render
-y apuntarlo a tu base de datos de RDS igual.
+Si se necesita administrar o probar la base privada desde el PC, usa una VPN
+de la VPC o un túnel autenticado de administración (por ejemplo, AWS Systems
+Manager Session Manager hacia un host de salto). No hace falta habilitar acceso
+público a RDS para publicar las aplicaciones.
+
+**Estado de conexión de esta máquina:** el `.env` local sigue apuntando a
+`localhost/Tutienda`. El endpoint compartido para RDS no resolvió por DNS desde
+este equipo, por lo que no se puede validar la ruta ni aplicar migraciones
+remotas desde aquí. Se necesita que AWS conecte este equipo a la VPC mediante
+VPN/túnel y que las credenciales se configuren localmente, sin enviarlas por
+chat ni guardarlas en Git.
+
+Consulta las guías de [escritorio](../desktop/README.md) y
+[móvil](../mobile/README.md) para generar instaladores una vez que la API HTTPS
+esté desplegada y accesible.
 
 ## Conexion alternativa con autenticacion IAM (sin password fijo)
 
